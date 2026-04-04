@@ -66,9 +66,9 @@ export function StmblClient() {
               </div>
             </a>
             <div className="action-row">
-              <button type="button" className="action-button" onClick={() => void refresh()}>
-                Next
-              </button>
+              <a href={item.href} target="_blank" rel="noreferrer" className="action-button text-link">
+                Open
+              </a>
             </div>
           </>
         )}
