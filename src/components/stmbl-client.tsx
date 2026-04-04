@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { sdk } from "@farcaster/miniapp-sdk";
 import type { DiscoveryItem } from "@/lib/mock-discovery";
 
 async function loadItem(): Promise<DiscoveryItem> {
@@ -26,6 +27,10 @@ export function StmblClient() {
 
   useEffect(() => {
     void refresh();
+
+    void sdk.actions.ready().catch(() => {
+      // Ignore when outside Farcaster mini app host.
+    });
   }, [refresh]);
 
   return (
