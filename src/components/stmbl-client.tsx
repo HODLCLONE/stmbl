@@ -3,12 +3,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { DiscoveryItem, DiscoveryMode } from "@/lib/mock-discovery";
 
-const MODES: Array<{ value: DiscoveryMode; label: string }> = [
-  { value: "random", label: "For you" },
-  { value: "niche", label: "Deep cuts" },
-  { value: "people", label: "People" },
-];
-
 async function loadItem(mode: DiscoveryMode): Promise<DiscoveryItem> {
   const response = await fetch(`/api/discover?mode=${mode}`, { cache: "no-store" });
   if (!response.ok) throw new Error("Failed to load discovery item");
@@ -25,7 +19,7 @@ function contextLabel(item: DiscoveryItem) {
 }
 
 export function StmblClient() {
-  const [mode, setMode] = useState<DiscoveryMode>("random");
+  const [mode] = useState<DiscoveryMode>("random");
   const [item, setItem] = useState<DiscoveryItem | null>(null);
   const [loading, setLoading] = useState(true);
   const [saved, setSaved] = useState<string[]>([]);
@@ -53,32 +47,14 @@ export function StmblClient() {
     <div className="stmbl-shell">
       <header className="glass-panel hero-panel">
         <div>
-          <p className="eyebrow">Farcaster discovery</p>
           <h1>Find your next corner of Farcaster.</h1>
           <p className="hero-copy">
             STMBL is a fast way to surface people, casts, and niche pockets worth opening when the main feed feels noisy.
           </p>
         </div>
-        <div className="hero-chip-stack">
-          <span className="hero-chip">find people</span>
-          <span className="hero-chip">open better threads</span>
-          <span className="hero-chip">save good picks</span>
-        </div>
       </header>
 
       <section className="glass-panel control-panel" aria-label="Discovery controls">
-        <div className="mode-row">
-          {MODES.map((entry) => (
-            <button
-              key={entry.value}
-              type="button"
-              className={`mode-pill ${mode === entry.value ? "is-active" : ""}`}
-              onClick={() => setMode(entry.value)}
-            >
-              {entry.label}
-            </button>
-          ))}
-        </div>
         <button type="button" className="stumble-button" onClick={() => void refresh(mode)}>
           STUMBLE
         </button>

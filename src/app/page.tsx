@@ -9,11 +9,9 @@ export default function Home() {
           <span className="brand-mark">ST</span>
           <div>
             <p className="brand-name">STMBL</p>
-            <p className="brand-subtitle">stmbl.hodlhq.app</p>
           </div>
         </div>
         <div className="nav-links">
-          <Link href="/saved">Saved</Link>
           <Link href="/settings">Settings</Link>
         </div>
       </nav>
