@@ -10,8 +10,6 @@ async function runRebuild() {
     ok: true,
     generatedAt: snapshot.generatedAt,
     randomPool: snapshot.pools.random.length,
-    nichePool: snapshot.pools.niche.length,
-    peoplePool: snapshot.pools.people.length,
   });
 }
 

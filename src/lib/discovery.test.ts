@@ -24,6 +24,8 @@ test("pickDiscoveryItem prefers unseen ids before recycling the pool", () => {
       href: "https://warpcast.com/alpha/0x1",
       engagement: "1 likes · 0 recasts · 0 replies",
       neynarScore: 0.8,
+      hash: "0x1",
+      authorUsername: "alpha",
     },
     {
       id: "cast-2",
@@ -36,6 +38,8 @@ test("pickDiscoveryItem prefers unseen ids before recycling the pool", () => {
       href: "https://warpcast.com/beta/0x2",
       engagement: "2 likes · 0 recasts · 0 replies",
       neynarScore: 0.7,
+      hash: "0x2",
+      authorUsername: "beta",
     },
   ];
 
@@ -51,31 +55,30 @@ test("formatEngagement renders a readable engagement line", () => {
 });
 
 test("toDiscoveryCast normalizes a Neynar cast payload into a STMBL card", () => {
-  const item = toDiscoveryCast(
-    {
-      hash: "0xabc",
-      text: "controlled chaos with taste",
-      author: {
-        username: "unclehodl",
-        display_name: "unc",
-        score: 0.91,
-      },
-      channel: { id: "builders" },
-      reactions: { likes_count: 42, recasts_count: 11 },
-      replies: { count: 6 },
+  const item = toDiscoveryCast({
+    hash: "0xabc",
+    text: "controlled chaos with taste",
+    author: {
+      fid: 42,
+      username: "unclehodl",
+      display_name: "unc",
+      score: 0.91,
     },
-    "random",
-  );
+    channel: { id: "builders" },
+    reactions: { likes_count: 42, recasts_count: 11 },
+    replies: { count: 6 },
+  });
 
   assert.equal(item.type, "cast");
   assert.equal(item.id, "cast:0xabc");
   assert.equal(item.handle, "@unclehodl");
   assert.equal(item.channel, "/builders");
   assert.equal(item.href, "https://warpcast.com/unclehodl/0xabc");
-  assert.match(item.reason, /High-signal/i);
+  assert.equal(item.hash, "0xabc");
+  assert.equal(item.authorUsername, "unclehodl");
 });
 
-test("toDiscoveryUser dedupes an author into a people card", () => {
+test("toDiscoveryUser includes fid for in-app profile opening", () => {
   const item = toDiscoveryUser({
     fid: 99,
     username: "aya",
@@ -92,6 +95,7 @@ test("toDiscoveryUser dedupes an author into a people card", () => {
   assert.equal(item.type, "user");
   assert.equal(item.id, "user:99");
   assert.equal(item.href, "https://warpcast.com/aya");
+  assert.equal(item.fid, 99);
   assert.match(item.engagement, /4.2k followers/i);
 });
 
@@ -104,17 +108,16 @@ test("toDiscoveryChannel builds a channel card from aggregated live casts", () =
     recasts: 5,
     replies: 11,
     sampleText: "Three good builders are posting here.",
-    topAuthors: ["@unclehodl", "@aya"],
   });
 
   assert.equal(item.type, "channel");
   assert.equal(item.id, "channel:builds");
   assert.equal(item.href, "https://warpcast.com/~/channel/builds");
+  assert.equal(item.slug, "builds");
   assert.match(item.reason, /active/i);
-  assert.match(item.engagement, /3 casts/i);
 });
 
-test("buildPoolsFromCasts adds channels to random and niche pools", () => {
+test("buildPoolsFromCasts returns random-only mixed pools and blacklists Farcaster accounts", () => {
   const casts: DiscoveryCast[] = [
     {
       hash: "0x1",
@@ -140,11 +143,20 @@ test("buildPoolsFromCasts adds channels to random and niche pools", () => {
       reactions: { likes_count: 10, recasts_count: 1 },
       replies: { count: 7 },
     },
+    {
+      hash: "0x4",
+      text: "Official Farcaster update that should be blocked",
+      author: { fid: 4, username: "farcaster", display_name: "Farcaster", score: 0.99, follower_count: 100000 },
+      channel: { id: "farcaster" },
+      reactions: { likes_count: 50, recasts_count: 10 },
+      replies: { count: 25 },
+    },
   ];
 
   const pools = buildPoolsFromCasts(casts);
 
+  assert.ok(pools.random.some((item) => item.type === "cast"));
+  assert.ok(pools.random.some((item) => item.type === "user"));
   assert.ok(pools.random.some((item) => item.type === "channel"));
-  assert.ok(pools.niche.some((item) => item.type === "channel"));
-  assert.ok(pools.people.every((item) => item.type === "user"));
+  assert.ok(!pools.random.some((item) => item.handle === "@farcaster" || item.handle === "/farcaster"));
 });

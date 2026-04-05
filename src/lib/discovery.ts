@@ -1,6 +1,6 @@
 import { revalidateTag, unstable_cache } from "next/cache";
 
-export type DiscoveryMode = "random" | "niche" | "people";
+export type DiscoveryMode = "random";
 export type DiscoveryItemType = "cast" | "user" | "channel";
 
 export type DiscoveryCastItem = {
@@ -14,6 +14,8 @@ export type DiscoveryCastItem = {
   href: string;
   engagement: string;
   neynarScore: number;
+  hash: string;
+  authorUsername: string;
 };
 
 export type DiscoveryUserItem = {
@@ -26,6 +28,8 @@ export type DiscoveryUserItem = {
   href: string;
   engagement: string;
   neynarScore: number;
+  fid: number | null;
+  username: string;
 };
 
 export type DiscoveryChannelItem = {
@@ -38,6 +42,7 @@ export type DiscoveryChannelItem = {
   href: string;
   engagement: string;
   neynarScore: number;
+  slug: string;
 };
 
 export type DiscoveryItem = DiscoveryCastItem | DiscoveryUserItem | DiscoveryChannelItem;
@@ -50,7 +55,9 @@ export type DiscoveryResponse = {
   source: "cache" | "fallback";
 };
 
-export type DiscoveryPools = Record<DiscoveryMode, DiscoveryItem[]>;
+export type DiscoveryPools = {
+  random: DiscoveryItem[];
+};
 
 export type DiscoverySnapshot = {
   pools: DiscoveryPools;
@@ -96,7 +103,6 @@ type DiscoveryChannelAggregate = {
   recasts: number;
   replies: number;
   sampleText: string;
-  topAuthors: string[];
 };
 
 type EngagementCounts = {
@@ -113,7 +119,24 @@ const CACHE_TTL_SECONDS = 60 * 15;
 const MAX_CASTS_PER_AUTHOR = 2;
 const MAX_CASTS_PER_CHANNEL = 4;
 
-const FALLBACK_CASTS: DiscoveryItem[] = [
+const BLACKLISTED_USERNAMES = new Set([
+  "farcaster",
+  "dwr",
+  "dwr.eth",
+  "v",
+  "varun",
+  "dan",
+  "danromero",
+  "rish",
+  "rish0x",
+  "anton",
+  "merkle",
+]);
+
+const BLACKLISTED_DISPLAY_NAMES = ["farcaster", "dan romero", "varun", "dwr"];
+const BLACKLISTED_CHANNELS = new Set(["farcaster", "fc"]);
+
+const FALLBACK_RANDOM: DiscoveryItem[] = [
   {
     id: "cast:fallback-1",
     type: "cast",
@@ -125,6 +148,8 @@ const FALLBACK_CASTS: DiscoveryItem[] = [
     href: "https://warpcast.com/unclehodl/0x7f1ffbac93cca0df7c4dc087a28cf6599183b918",
     engagement: "42 likes · 11 recasts · 6 replies",
     neynarScore: 0.91,
+    hash: "0x7f1ffbac93cca0df7c4dc087a28cf6599183b918",
+    authorUsername: "unclehodl",
   },
   {
     id: "cast:fallback-2",
@@ -137,24 +162,11 @@ const FALLBACK_CASTS: DiscoveryItem[] = [
     href: "https://warpcast.com/mori/0x2",
     engagement: "29 likes · 7 recasts · 8 replies",
     neynarScore: 0.84,
+    hash: "0x2",
+    authorUsername: "mori",
   },
   {
-    id: "cast:fallback-3",
-    type: "cast",
-    author: "rio",
-    handle: "@rio",
-    channel: "/farcaster",
-    text: "Underrated is better than trending if the filter understands trust, recency, and weirdness.",
-    reason: "Niche cast with strong reply density",
-    href: "https://warpcast.com/rio/0x3",
-    engagement: "18 likes · 3 recasts · 9 replies",
-    neynarScore: 0.8,
-  },
-];
-
-const FALLBACK_USERS: DiscoveryItem[] = [
-  {
-    id: "user:1",
+    id: "user:aya",
     type: "user",
     author: "aya",
     handle: "@aya",
@@ -163,32 +175,9 @@ const FALLBACK_USERS: DiscoveryItem[] = [
     href: "https://warpcast.com/aya",
     engagement: "4.2k followers · active on Farcaster",
     neynarScore: 0.88,
+    fid: 99,
+    username: "aya",
   },
-  {
-    id: "user:2",
-    type: "user",
-    author: "luma",
-    handle: "@luma",
-    bio: "Collects niche channels, weird software, and social surfaces that still have soul.",
-    reason: "Strong long-tail account surfaced from live casts",
-    href: "https://warpcast.com/luma",
-    engagement: "1.1k followers · active on Farcaster",
-    neynarScore: 0.82,
-  },
-  {
-    id: "user:3",
-    type: "user",
-    author: "tess",
-    handle: "@tess",
-    bio: "Posts less, lands more. Infra, signal curation, and low-noise product notes.",
-    reason: "High-trust user with quality posting history",
-    href: "https://warpcast.com/tess",
-    engagement: "2.8k followers · active on Farcaster",
-    neynarScore: 0.87,
-  },
-];
-
-const FALLBACK_CHANNELS: DiscoveryItem[] = [
   {
     id: "channel:builders",
     type: "channel",
@@ -197,19 +186,9 @@ const FALLBACK_CHANNELS: DiscoveryItem[] = [
     bio: "Builder-heavy channel with live app shipping, feedback loops, and less sludge.",
     reason: "Active niche channel with real operator density",
     href: "https://warpcast.com/~/channel/builders",
-    engagement: "12 casts sampled · 8 builders active",
+    engagement: "12 casts sampled · 8 active authors",
     neynarScore: 0.86,
-  },
-  {
-    id: "channel:farcaster",
-    type: "channel",
-    author: "Farcaster",
-    handle: "/farcaster",
-    bio: "Core ecosystem channel with product chatter, infra notes, and live conversation.",
-    reason: "Core channel with ongoing quality activity",
-    href: "https://warpcast.com/~/channel/farcaster",
-    engagement: "18 casts sampled · 12 operators active",
-    neynarScore: 0.8,
+    slug: "builders",
   },
 ];
 
@@ -237,21 +216,20 @@ function clampScore(score: number): number {
   return Math.max(0, Math.min(1, score));
 }
 
-function getCastTimestamp(cast: DiscoveryCast): number {
-  if (!cast.timestamp) return 0;
-  const parsed = Date.parse(cast.timestamp);
-  return Number.isNaN(parsed) ? 0 : parsed;
+function getUsername(cast: DiscoveryCast): string | null {
+  return cast.author?.username?.trim() || null;
 }
 
-function ageFreshnessScore(cast: DiscoveryCast): number {
-  const timestamp = getCastTimestamp(cast);
-  if (!timestamp) return 0.55;
-  const ageHours = Math.max(0, (Date.now() - timestamp) / 3_600_000);
-  return Math.max(0, 1 - ageHours / 48);
+function getDisplayName(user: DiscoveryUser | null | undefined): string {
+  return user?.display_name?.trim() || user?.username?.trim() || "farcaster";
 }
 
-function getAuthorScore(cast: DiscoveryCast): number {
-  return clampScore(cast.author?.score ?? 0.65);
+function getChannelId(cast: DiscoveryCast): string | null {
+  return cast.channel?.id?.trim() || null;
+}
+
+function getText(cast: DiscoveryCast): string {
+  return cast.text?.trim() || "Fresh cast from Farcaster.";
 }
 
 function getEngagement(cast: DiscoveryCast): EngagementCounts {
@@ -262,21 +240,49 @@ function getEngagement(cast: DiscoveryCast): EngagementCounts {
   };
 }
 
-function getText(cast: DiscoveryCast): string {
-  return cast.text?.trim() || "Fresh cast from Farcaster.";
+function ageFreshnessScore(cast: DiscoveryCast): number {
+  if (!cast.timestamp) return 0.55;
+  const parsed = Date.parse(cast.timestamp);
+  if (Number.isNaN(parsed)) return 0.55;
+  const ageHours = Math.max(0, (Date.now() - parsed) / 3_600_000);
+  return Math.max(0, 1 - ageHours / 48);
 }
 
-function getUsername(cast: DiscoveryCast): string | null {
-  return cast.author?.username?.trim() || null;
-}
-
-function getChannelId(cast: DiscoveryCast): string | null {
-  return cast.channel?.id?.trim() || null;
+function getAuthorScore(cast: DiscoveryCast): number {
+  return clampScore(cast.author?.score ?? 0.65);
 }
 
 function isSpammyText(text: string): boolean {
   const lowered = text.toLowerCase();
   return /(airdrop|wl spot|mint now|dm me|guaranteed|passive income)/i.test(lowered) || (lowered.includes("http") && lowered.length < 40);
+}
+
+function normalizeHandle(value: string | null | undefined): string {
+  return (value ?? "").trim().toLowerCase().replace(/^@/, "");
+}
+
+function isBlacklistedUser(user: DiscoveryUser | null | undefined): boolean {
+  const username = normalizeHandle(user?.username);
+  const displayName = (user?.display_name ?? "").trim().toLowerCase();
+  if (BLACKLISTED_USERNAMES.has(username)) return true;
+  return BLACKLISTED_DISPLAY_NAMES.some((entry) => displayName.includes(entry));
+}
+
+function isBlacklistedCast(cast: DiscoveryCast): boolean {
+  if (isBlacklistedUser(cast.author)) return true;
+  const channelId = getChannelId(cast);
+  return Boolean(channelId && BLACKLISTED_CHANNELS.has(channelId.toLowerCase()));
+}
+
+function isViableCast(cast: DiscoveryCast): boolean {
+  const username = getUsername(cast);
+  const text = getText(cast);
+  if (!cast.hash || !username) return false;
+  if (isBlacklistedCast(cast)) return false;
+  if (text.length < 24) return false;
+  if (isSpammyText(text)) return false;
+  const { likes, recasts, replies } = getEngagement(cast);
+  return likes + recasts + replies >= 3;
 }
 
 function scoreCast(cast: DiscoveryCast): number {
@@ -289,37 +295,10 @@ function scoreCast(cast: DiscoveryCast): number {
   return authorScore * 0.48 + engagementScore * 0.26 + freshness * 0.14 + lengthScore * 0.12 + channelBoost;
 }
 
-function nicheScore(cast: DiscoveryCast): number {
-  const authorScore = getAuthorScore(cast);
-  const { likes, recasts, replies } = getEngagement(cast);
-  const text = getText(cast);
-  const replyDensity = Math.min(1, replies / Math.max(1, likes));
-  const antiViral = 1 - Math.min(1, likes / 180);
-  const conversation = Math.min(1, (replies + recasts) / 18);
-  const channelBoost = getChannelId(cast) ? 0.14 : 0;
-  const textDepth = Math.min(1, text.length / 280);
-  const lowLinkPenalty = text.includes("http") ? 0.08 : 0;
-  return authorScore * 0.38 + replyDensity * 0.2 + antiViral * 0.14 + conversation * 0.12 + textDepth * 0.08 + channelBoost - lowLinkPenalty;
-}
-
-function channelScore(aggregate: DiscoveryChannelAggregate): number {
-  const engagement = Math.min(1, Math.log10(aggregate.likes + aggregate.recasts * 2 + aggregate.replies * 2 + 1) / 2.1);
-  const participation = Math.min(1, aggregate.uniqueAuthors / 8);
-  const velocity = Math.min(1, aggregate.castCount / 8);
-  return 0.46 + engagement * 0.26 + participation * 0.16 + velocity * 0.12;
-}
-
-function describeCast(mode: DiscoveryMode, cast: DiscoveryCast): string {
+function describeCast(cast: DiscoveryCast): string {
   const { likes, replies } = getEngagement(cast);
   const hasChannel = Boolean(getChannelId(cast));
   const score = getAuthorScore(cast);
-
-  if (mode === "niche") {
-    if (replies >= likes && hasChannel) return "Channel-native cast with stronger replies than likes";
-    if (replies >= 6) return "Conversation-dense cast pulled from the long tail";
-    return "Niche cast filtered for trust, depth, and lower-tourist engagement";
-  }
-
   if (score >= 0.9) return "High-signal cast from a trusted Farcaster account";
   if (replies > likes) return "Conversation-heavy cast with stronger replies than likes";
   if (hasChannel) return "Channel-native cast filtered for trust and engagement quality";
@@ -332,9 +311,15 @@ function describeUser(score: number, followers: number): string {
   return "Active Farcaster user surfaced from clean live casts";
 }
 
-export function toDiscoveryCast(cast: DiscoveryCast, mode: DiscoveryMode): DiscoveryCastItem {
+function channelScore(aggregate: DiscoveryChannelAggregate): number {
+  const engagement = Math.min(1, Math.log10(aggregate.likes + aggregate.recasts * 2 + aggregate.replies * 2 + 1) / 2.1);
+  const participation = Math.min(1, aggregate.uniqueAuthors / 8);
+  const velocity = Math.min(1, aggregate.castCount / 8);
+  return 0.46 + engagement * 0.26 + participation * 0.16 + velocity * 0.12;
+}
+
+export function toDiscoveryCast(cast: DiscoveryCast): DiscoveryCastItem {
   const username = getUsername(cast) ?? "farcaster";
-  const displayName = cast.author?.display_name?.trim() || username;
   const hash = cast.hash ?? crypto.randomUUID();
   const channelId = getChannelId(cast);
   const engagement = getEngagement(cast);
@@ -342,19 +327,21 @@ export function toDiscoveryCast(cast: DiscoveryCast, mode: DiscoveryMode): Disco
   return {
     id: `cast:${hash}`,
     type: "cast",
-    author: displayName,
+    author: getDisplayName(cast.author),
     handle: `@${username}`,
     channel: channelId ? `/${channelId}` : "live feed",
     text: getText(cast),
-    reason: describeCast(mode, cast),
+    reason: describeCast(cast),
     href: `https://warpcast.com/${username}/${hash}`,
     engagement: formatEngagement(engagement),
     neynarScore: getAuthorScore(cast),
+    hash,
+    authorUsername: username,
   };
 }
 
 export function toDiscoveryUser(user: DiscoveryUser): DiscoveryUserItem {
-  const username = user.username ?? `fid-${user.fid ?? crypto.randomUUID()}`;
+  const username = normalizeHandle(user.username) || `fid-${user.fid ?? crypto.randomUUID()}`;
   const displayName = user.display_name?.trim() || username;
   const followers = user.follower_count ?? 0;
   const neynarScore = clampScore(user.score ?? 0.65);
@@ -370,6 +357,8 @@ export function toDiscoveryUser(user: DiscoveryUser): DiscoveryUserItem {
     href: `https://warpcast.com/${username}`,
     engagement: `${formatCompactNumber(followers)} followers · active on Farcaster`,
     neynarScore,
+    fid: user.fid ?? null,
+    username,
   };
 }
 
@@ -380,8 +369,6 @@ export function toDiscoveryChannel(aggregate: DiscoveryChannelAggregate): Discov
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
-  const score = channelScore(aggregate);
-  const dominantReason = aggregate.uniqueAuthors >= 4 ? "Active niche channel with multiple real operators posting" : "Active channel with healthy concentrated conversation";
 
   return {
     id: `channel:${slug}`,
@@ -389,30 +376,24 @@ export function toDiscoveryChannel(aggregate: DiscoveryChannelAggregate): Discov
     author: displayName || slug,
     handle: `/${slug}`,
     bio: aggregate.sampleText,
-    reason: dominantReason,
+    reason:
+      aggregate.uniqueAuthors >= 4
+        ? "Active niche channel with multiple real operators posting"
+        : "Active channel with healthy concentrated conversation",
     href: `https://warpcast.com/~/channel/${slug}`,
     engagement: `${aggregate.castCount} casts sampled · ${aggregate.uniqueAuthors} active authors`,
-    neynarScore: score,
+    neynarScore: channelScore(aggregate),
+    slug,
   };
 }
 
-function isViableCast(cast: DiscoveryCast): boolean {
-  const username = getUsername(cast);
-  const text = getText(cast);
-  if (!cast.hash || !username) return false;
-  if (text.length < 24) return false;
-  if (isSpammyText(text)) return false;
-  const { likes, recasts, replies } = getEngagement(cast);
-  return likes + recasts + replies >= 3;
-}
-
-function capRankedCasts(casts: DiscoveryCast[], scorer: (cast: DiscoveryCast) => number): DiscoveryCast[] {
+function capRankedCasts(casts: DiscoveryCast[]): DiscoveryCast[] {
   const authorCounts = new Map<string, number>();
   const channelCounts = new Map<string, number>();
 
   return [...casts]
     .filter(isViableCast)
-    .sort((left, right) => scorer(right) - scorer(left))
+    .sort((left, right) => scoreCast(right) - scoreCast(left))
     .filter((cast) => {
       const username = getUsername(cast) ?? "unknown";
       const channelId = getChannelId(cast) ?? "__no_channel__";
@@ -432,9 +413,11 @@ function buildChannelAggregates(casts: DiscoveryCast[]): DiscoveryChannelAggrega
   for (const cast of casts) {
     const channelId = getChannelId(cast);
     const username = getUsername(cast);
-    if (!channelId || !username) continue;
+    if (!channelId || !username || BLACKLISTED_CHANNELS.has(channelId.toLowerCase())) continue;
+    if (isBlacklistedCast(cast)) continue;
+
     const engagement = getEngagement(cast);
-    const existing = channels.get(channelId) ?? {
+    const current = channels.get(channelId) ?? {
       id: channelId,
       castCount: 0,
       uniqueAuthors: 0,
@@ -442,21 +425,18 @@ function buildChannelAggregates(casts: DiscoveryCast[]): DiscoveryChannelAggrega
       recasts: 0,
       replies: 0,
       sampleText: getText(cast),
-      topAuthors: [],
       authors: new Set<string>(),
     };
 
-    existing.castCount += 1;
-    existing.likes += engagement.likes;
-    existing.recasts += engagement.recasts;
-    existing.replies += engagement.replies;
-    existing.authors.add(`@${username}`);
-    existing.topAuthors = [...existing.authors].slice(0, 3);
-    if (getText(cast).length > existing.sampleText.length) {
-      existing.sampleText = getText(cast);
+    current.castCount += 1;
+    current.likes += engagement.likes;
+    current.recasts += engagement.recasts;
+    current.replies += engagement.replies;
+    current.authors.add(username);
+    if (getText(cast).length > current.sampleText.length) {
+      current.sampleText = getText(cast);
     }
-
-    channels.set(channelId, existing);
+    channels.set(channelId, current);
   }
 
   return [...channels.values()]
@@ -469,45 +449,35 @@ function buildChannelAggregates(casts: DiscoveryCast[]): DiscoveryChannelAggrega
 }
 
 function uniqueUsersFromCasts(casts: DiscoveryCast[]): DiscoveryUserItem[] {
-  const byFid = new Map<string, DiscoveryUserItem>();
+  const byId = new Map<string, DiscoveryUserItem>();
 
   for (const cast of [...casts].sort((left, right) => scoreCast(right) - scoreCast(left))) {
     const user = cast.author;
-    if (!user?.username) continue;
-    const id = String(user.fid ?? user.username);
-    if (byFid.has(id)) continue;
-    byFid.set(id, toDiscoveryUser(user));
-    if (byFid.size >= 24) break;
+    if (!user?.username || isBlacklistedUser(user)) continue;
+    const key = String(user.fid ?? normalizeHandle(user.username));
+    if (byId.has(key)) continue;
+    byId.set(key, toDiscoveryUser(user));
+    if (byId.size >= 8) break;
   }
 
-  return [...byFid.values()];
+  return [...byId.values()];
 }
 
 export function buildPoolsFromCasts(casts: DiscoveryCast[]): DiscoveryPools {
-  const rankedRandomCasts = capRankedCasts(casts, scoreCast).slice(0, 12).map((cast) => toDiscoveryCast(cast, "random"));
-  const rankedNicheCasts = capRankedCasts(
-    casts.filter((cast) => Boolean(getChannelId(cast)) && (cast.replies?.count ?? 0) >= 2),
-    nicheScore,
-  )
-    .slice(0, 10)
-    .map((cast) => toDiscoveryCast(cast, "niche"));
-
-  const users = uniqueUsersFromCasts(casts).slice(0, 12);
-  const channels = buildChannelAggregates(casts).map((aggregate) => toDiscoveryChannel(aggregate));
-  const nicheChannels = channels.filter((channel) => channel.neynarScore >= 0.72).slice(0, 6);
+  const rankedCasts = capRankedCasts(casts).slice(0, 12).map((cast) => toDiscoveryCast(cast));
+  const users = uniqueUsersFromCasts(casts).slice(0, 6);
+  const channels = buildChannelAggregates(casts)
+    .map((aggregate) => toDiscoveryChannel(aggregate))
+    .slice(0, 4);
 
   return {
-    random: [...rankedRandomCasts, ...users.slice(0, 6), ...channels.slice(0, 4)],
-    niche: [...rankedNicheCasts, ...nicheChannels, ...users.filter((user) => user.neynarScore >= 0.78).slice(0, 3)],
-    people: users,
+    random: [...rankedCasts, ...users, ...channels],
   };
 }
 
 async function neynarFetch<T>(path: string, params: Record<string, string | number>): Promise<T> {
   const apiKey = process.env.NEYNAR_API_KEY;
-  if (!apiKey) {
-    throw new Error("Missing NEYNAR_API_KEY");
-  }
+  if (!apiKey) throw new Error("Missing NEYNAR_API_KEY");
 
   const searchParams = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
@@ -529,15 +499,14 @@ async function neynarFetch<T>(path: string, params: Record<string, string | numb
   return (await response.json()) as T;
 }
 
-async function fetchTrendingCasts(mode: DiscoveryMode): Promise<DiscoveryCast[]> {
-  const timeWindow = mode === "niche" ? "6h" : "24h";
+async function fetchTrendingCasts(): Promise<DiscoveryCast[]> {
   const casts: DiscoveryCast[] = [];
   let cursor: string | undefined;
 
   for (let index = 0; index < PAGE_COUNT; index += 1) {
     const response = await neynarFetch<{ casts?: DiscoveryCast[]; next?: { cursor?: string } }>("/feed/trending", {
       limit: PAGE_LIMIT,
-      time_window: timeWindow,
+      time_window: "24h",
       feed_type: "filter",
       ...(cursor ? { cursor } : {}),
     });
@@ -551,13 +520,9 @@ async function fetchTrendingCasts(mode: DiscoveryMode): Promise<DiscoveryCast[]>
 }
 
 async function buildLiveSnapshot(): Promise<DiscoverySnapshot> {
-  const [randomCasts, nicheCasts] = await Promise.all([fetchTrendingCasts("random"), fetchTrendingCasts("niche")]);
-  const combined = [...randomCasts, ...nicheCasts];
-  const pools = buildPoolsFromCasts(combined);
-
-  if (!pools.random.length || !pools.people.length) {
-    throw new Error("Discovery pools came back empty");
-  }
+  const casts = await fetchTrendingCasts();
+  const pools = buildPoolsFromCasts(casts);
+  if (!pools.random.length) throw new Error("Discovery pool came back empty");
 
   return {
     pools,
@@ -574,9 +539,7 @@ function fallbackSnapshot(): DiscoverySnapshot {
   return {
     generatedAt: new Date().toISOString(),
     pools: {
-      random: [...FALLBACK_CASTS, ...FALLBACK_USERS, ...FALLBACK_CHANNELS],
-      niche: [FALLBACK_CASTS[2], ...FALLBACK_CHANNELS, ...FALLBACK_USERS.slice(1)],
-      people: FALLBACK_USERS,
+      random: FALLBACK_RANDOM,
     },
   };
 }
@@ -586,18 +549,14 @@ export async function rebuildDiscoveryPools(): Promise<DiscoverySnapshot> {
   return getCachedSnapshot();
 }
 
-export async function getDiscovery(mode: DiscoveryMode, seenIds: string[]): Promise<DiscoveryResponse> {
+export async function getDiscovery(_mode: DiscoveryMode, seenIds: string[]): Promise<DiscoveryResponse> {
   try {
     const snapshot = await getCachedSnapshot();
-    const pool = snapshot.pools[mode];
-
-    if (!pool?.length) {
-      throw new Error(`Discovery pool empty for mode ${mode}`);
-    }
+    const pool = snapshot.pools.random;
 
     return {
       item: pickDiscoveryItem(pool, seenIds),
-      mode,
+      mode: "random",
       generatedAt: snapshot.generatedAt,
       poolSize: pool.length,
       source: "cache",
@@ -605,10 +564,10 @@ export async function getDiscovery(mode: DiscoveryMode, seenIds: string[]): Prom
   } catch (error) {
     console.error("STMBL discovery fallback", error);
     const snapshot = fallbackSnapshot();
-    const pool = snapshot.pools[mode] ?? snapshot.pools.random;
+    const pool = snapshot.pools.random;
     return {
       item: pickDiscoveryItem(pool, seenIds),
-      mode,
+      mode: "random",
       generatedAt: snapshot.generatedAt,
       poolSize: pool.length,
       source: "fallback",
