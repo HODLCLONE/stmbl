@@ -4,8 +4,9 @@ import { useCallback, useEffect, useState } from "react";
 import { sdk } from "@farcaster/miniapp-sdk";
 import type { DiscoveryItem } from "@/lib/mock-discovery";
 
-async function loadItem(): Promise<DiscoveryItem> {
-  const response = await fetch("/api/discover", { cache: "no-store" });
+async function loadItem(excludeIds: string[] = []): Promise<DiscoveryItem> {
+  const query = excludeIds.length > 0 ? `?exclude=${encodeURIComponent(excludeIds.join(","))}` : "";
+  const response = await fetch(`/api/discover${query}`, { cache: "no-store" });
   if (!response.ok) throw new Error("Failed to load discovery item");
   const data = (await response.json()) as { item: DiscoveryItem };
   return data.item;
@@ -14,24 +15,33 @@ async function loadItem(): Promise<DiscoveryItem> {
 export function StmblClient() {
   const [item, setItem] = useState<DiscoveryItem | null>(null);
   const [loading, setLoading] = useState(true);
+  const [seenIds, setSeenIds] = useState<string[]>([]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const nextItem = await loadItem();
+      const nextItem = await loadItem(seenIds);
       setItem(nextItem);
+      setSeenIds((current) => {
+        if (current.includes(nextItem.id)) return current;
+        return [...current, nextItem.id];
+      });
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [seenIds]);
 
   useEffect(() => {
-    void refresh();
-
     void sdk.actions.ready().catch(() => {
       // Ignore when outside Farcaster mini app host.
     });
-  }, [refresh]);
+  }, []);
+
+  useEffect(() => {
+    if (!item) {
+      void refresh();
+    }
+  }, [item, refresh]);
 
   return (
     <div className="stmbl-shell">
